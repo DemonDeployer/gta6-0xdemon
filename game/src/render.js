@@ -3,15 +3,42 @@
 // pseudo-3D buildings with soft shadows, cars, pedestrians, the player,
 // skid marks, particles, bullets, the mission marker beacon and the
 // waypoint arrow that always points at the objective.
-import { CFG, PALETTE } from './config.js';
+import { CFG, PALETTE, VEHICLE_STATS } from './config.js';
 import { worldWidth, worldHeight, roadCenter } from './world.js';
+
+// True between 20:00 and 06:00 game time: neon on, headlights on.
+export function isNight(G) {
+  const m = G.clockMinutes;
+  return m >= CFG.NIGHT_START_MINUTES || m < CFG.NIGHT_END_MINUTES;
+}
 
 function drawCarShape(ctx, car) {
   ctx.save();
   ctx.translate(car.x, car.y);
   ctx.rotate(car.angle);
-  const L = car.type === 'truck' ? 58 : CFG.CAR_LENGTH;
-  const Wd = car.type === 'truck' ? 26 : CFG.CAR_WIDTH;
+  const stats = VEHICLE_STATS[car.type] || VEHICLE_STATS.sedan;
+  const L = stats.length;
+  const Wd = stats.width;
+  if (car.type === 'bike') {
+    // Motorbike: slim body, wheels, rider.
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(-L / 2 + 3, -Wd / 2 + 4, L, Wd);
+    ctx.fillStyle = '#1c2733';
+    ctx.beginPath(); ctx.arc(-L / 2 + 4, 0, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(L / 2 - 4, 0, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = car.color;
+    ctx.beginPath();
+    ctx.roundRect(-L / 2 + 6, -Wd / 2, L - 12, Wd, 4);
+    ctx.fill();
+    ctx.fillStyle = '#f1c27d';
+    ctx.beginPath(); ctx.arc(2, 0, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1c2733';
+    ctx.beginPath(); ctx.arc(2, 0, 5, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = '#fff8c0';
+    ctx.fillRect(L / 2 - 2, -2, 2, 4);
+    ctx.restore();
+    return;
+  }
   // Shadow.
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.fillRect(-L / 2 + 3, -Wd / 2 + 4, L, Wd);
@@ -22,8 +49,14 @@ function drawCarShape(ctx, car) {
   ctx.fill();
   // Cabin / windshield.
   ctx.fillStyle = 'rgba(20,30,45,0.85)';
-  const cabL = car.type === 'truck' ? 14 : 20;
+  const cabL = car.type === 'truck' ? 14 : car.type === 'van' ? 26 : 20;
   ctx.fillRect(-cabL / 2 + 2, -Wd / 2 + 4, cabL, Wd - 8);
+  if (car.type === 'van') {
+    // Cargo doors.
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(L / 2 - 16, -Wd / 2 + 3, 12, Wd - 6);
+  }
   // Roof stripe for taxis, light bar for police.
   if (car.type === 'taxi') {
     ctx.fillStyle = '#111111';
@@ -215,6 +248,36 @@ export function renderWorld(ctx, G, W, H) {
       ctx.strokeRect(lx, ly, 44, 66);
     }
   }
+  // Pay 'n Spray garage on the lot: green roof, big sign, drive-in zone.
+  if (w.garage) {
+    const g = w.garage;
+    ctx.fillStyle = '#1e7d46';
+    ctx.fillRect(g.x + 40, g.y + 16, 160, 54);
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(g.x + 40, g.y + 16, 160, 54);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText("PAY 'N SPRAY", g.x + 120, g.y + 40);
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#ffd700';
+    ctx.fillText('$200 — LOSE THE HEAT', g.x + 120, g.y + 58);
+    ctx.textAlign = 'left';
+    ctx.strokeStyle = 'rgba(30,125,70,0.9)';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([14, 10]);
+    ctx.strokeRect(g.x + 8, g.y + 8, g.w - 16, g.h - 16);
+    ctx.setLineDash([]);
+  }
+  // District names painted on the ground.
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'center';
+  for (const d of w.districts) {
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
+    ctx.fillText(d.name, d.x, d.y);
+  }
+  ctx.textAlign = 'left';
   // Trees.
   for (const t of w.trees) {
     if (t.x < view.x0 || t.x > view.x1 || t.y < view.y0 || t.y > view.y1) continue;
@@ -313,6 +376,55 @@ export function renderWorld(ctx, G, W, H) {
     } else { // dust
       ctx.fillStyle = 'rgba(200,190,160,' + (a * 0.45) + ')';
       ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size * a + 2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // Night: darkness falls, then pools of light — headlights, lit windows,
+  // neon signs on tall buildings, and streetlamp glow at intersections.
+  if (isNight(G)) {
+    ctx.fillStyle = 'rgba(8,10,38,0.46)';
+    ctx.fillRect(view.x0, view.y0, view.x1 - view.x0, view.y1 - view.y0);
+    // Headlight cones from every car.
+    for (const car of G.cars) {
+      const fx = Math.cos(car.angle), fy = Math.sin(car.angle);
+      const grad = ctx.createLinearGradient(car.x, car.y, car.x + fx * 190, car.y + fy * 190);
+      grad.addColorStop(0, 'rgba(255,244,180,0.30)');
+      grad.addColorStop(1, 'rgba(255,244,180,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(car.x + fx * 20, car.y + fy * 20);
+      ctx.lineTo(car.x + fx * 190 - fy * 42, car.y + fy * 190 + fx * 42);
+      ctx.lineTo(car.x + fx * 190 + fy * 42, car.y + fy * 190 - fx * 42);
+      ctx.closePath(); ctx.fill();
+    }
+    // Lit windows and neon on the buildings in view.
+    const NEON = ['#ff2d95', '#00e5ff', '#39ff88', '#ffea00'];
+    let ni = 0;
+    for (const b of w.buildings) {
+      if (b.x > view.x1 || b.x + b.w < view.x0 || b.y > view.y1 || b.y + b.h < view.y0) continue;
+      const ox = -b.height * 0.22, oy = -b.height * 0.3;
+      ctx.fillStyle = 'rgba(255,214,110,0.9)';
+      const wins = 2 + ((b.x + b.y) % 3);
+      for (let k = 0; k < wins; k++) {
+        ctx.fillRect(b.x + ox + 12 + k * 26, b.y + oy + 12 + (k % 2) * 20, 10, 8);
+      }
+      if (b.height > 55) {
+        ctx.fillStyle = NEON[ni++ % NEON.length];
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(b.x + ox + 10, b.y + oy + 4, Math.max(24, b.w - 20), 6);
+        ctx.globalAlpha = 1;
+      }
+    }
+    // Streetlamp pools at the intersections in view.
+    for (let i = 0; i <= CFG.GRID; i++) {
+      for (let j = 0; j <= CFG.GRID; j++) {
+        const lx = roadCenter(i), ly = roadCenter(j);
+        if (lx < view.x0 || lx > view.x1 || ly < view.y0 || ly > view.y1) continue;
+        const lg = ctx.createRadialGradient(lx, ly, 4, lx, ly, 80);
+        lg.addColorStop(0, 'rgba(255,220,130,0.20)');
+        lg.addColorStop(1, 'rgba(255,220,130,0)');
+        ctx.fillStyle = lg;
+        ctx.beginPath(); ctx.arc(lx, ly, 80, 0, Math.PI * 2); ctx.fill();
+      }
     }
   }
   // Waypoint arrow at the screen edge, pointing at the mission marker.

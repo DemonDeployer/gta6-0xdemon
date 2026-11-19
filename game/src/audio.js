@@ -102,6 +102,8 @@ export function createAudio() {
     missionFail() { [392, 330, 262].forEach((f, i) => setTimeout(() => blip(f, 0.2, 'sawtooth', 0.18), i * 120)); },
     busted() { [440, 415, 392, 370].forEach((f, i) => setTimeout(() => blip(f, 0.25, 'square', 0.15), i * 140)); },
     click() { blip(660, 0.05, 'sine', 0.15); },
+    // Pay 'n Spray: a spray-gun hiss over a cash-register chime.
+    spray() { noiseHit(0.4, 0.2, 5000, 'highpass'); blip(1318, 0.1, 'sine', 0.2); setTimeout(() => blip(1760, 0.14, 'sine', 0.2), 90); },
     // Two-tone police siren, called every frame while wanted > 0.
     siren(dt, wanted) {
       if (!ensure() || wanted <= 0) return;

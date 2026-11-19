@@ -30,6 +30,16 @@ export const CFG = {
   CAR_MAX_HEALTH: 100,
   TRAFFIC_SPEED: 95,
 
+  // --- day / night -----------------------------------------------------------
+  DAY_LENGTH_SECONDS: 360, // one full in-game day per 6 real minutes
+  DAY_START_MINUTES: 10 * 60, // the story opens at 10:00
+  NIGHT_START_MINUTES: 20 * 60, // neon comes on at 20:00
+  NIGHT_END_MINUTES: 6 * 60,    // dawn at 06:00
+
+  // --- pay 'n spray -----------------------------------------------------------
+  SPRAY_COST: 200,        // clears the wanted level and repairs the car
+  SPRAY_COOLDOWN_SECONDS: 5,
+
   // --- police / wanted ------------------------------------------------------
   MAX_WANTED: 5,
   WANTED_DECAY_SECONDS: 9,
@@ -48,6 +58,18 @@ export const CFG = {
   // --- missions --------------------------------------------------------------
   MISSION_MARKER_RADIUS: 46,
   SAVE_KEY: 'neon-bay-save-v1',
+};
+
+// Per-vehicle handling: name, top speed, acceleration and turn rate. The
+// player car reads these; traffic keeps its own cruising speed.
+export const VEHICLE_STATS = {
+  sedan:   { name: 'Bay Sedan',    maxSpeed: 430, accel: 300, turn: 2.6, length: 46, width: 22 },
+  sport:   { name: 'Comet GT',     maxSpeed: 520, accel: 360, turn: 3.1, length: 46, width: 22 },
+  taxi:    { name: 'Bay Cab',      maxSpeed: 400, accel: 280, turn: 2.6, length: 46, width: 22 },
+  police:  { name: 'Bay PD Cruiser', maxSpeed: 470, accel: 330, turn: 2.8, length: 46, width: 22 },
+  truck:   { name: 'Hauler Truck', maxSpeed: 340, accel: 220, turn: 2.0, length: 58, width: 26 },
+  van:     { name: 'Courier Van',  maxSpeed: 380, accel: 250, turn: 2.2, length: 54, width: 24 },
+  bike:    { name: 'Neon Rider',   maxSpeed: 500, accel: 380, turn: 3.6, length: 40, width: 12 },
 };
 
 // Sun-soaked day palette for Neon Bay.
@@ -104,6 +126,26 @@ export const MISSION_DEFS = [
     id: 'the-last-job', title: 'Mission 6 — The Last Job',
     intro: 'One last pickup, one last drop, with the whole city hunting you at 4 stars. Finish this and the $50,000 debt is gone.',
     reward: 50000, kind: 'final',
+  },
+  {
+    id: 'taxi-fare', title: 'Side Job — Taxi Fare',
+    intro: 'Debt paid, but rent is not. A fare is waiting by the park — pick them up and drop them at the beach before the meter runs out.',
+    reward: 900, kind: 'taxi', timeLimit: 75,
+  },
+  {
+    id: 'street-race', title: 'Side Job — Neon Street Race',
+    intro: 'The midnight crew races for pink slips. Beat the rival through all four checkpoints — first across the last one takes $3,000.',
+    reward: 3000, kind: 'race',
+  },
+  {
+    id: 'delivery-run', title: 'Side Job — Delivery Run',
+    intro: 'Three drops, one van, ninety seconds. The courier firm pays $1,800 if every parcel lands on time.',
+    reward: 1800, kind: 'delivery', timeLimit: 90,
+  },
+  {
+    id: 'vigilante', title: 'Side Job — Vigilante',
+    intro: 'A getaway car is tearing through downtown. Bay PD looks the other way — wreck it by ramming or shooting before it escapes.',
+    reward: 2500, kind: 'vigilante', timeLimit: 90,
   },
 ];
 

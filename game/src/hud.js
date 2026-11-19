@@ -4,6 +4,8 @@
 import { CFG, PALETTE, MISSION_DEFS } from './config.js';
 import { missionObjectiveText, currentDef, debtProgress } from './missions.js';
 import { worldWidth, worldHeight } from './world.js';
+import { isNight } from './render.js';
+import { vehicleName } from './vehicles.js';
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -79,6 +81,35 @@ export function drawMinimap(ctx, G, x, y, size) {
     ctx.arc(cx * s, cy * s, 3.5, 0, Math.PI * 2);
     ctx.fill();
   }
+  // Pay 'n Spray garage (green $) and the getaway car (red) when relevant.
+  if (G.world.garage) {
+    ctx.fillStyle = '#1e7d46';
+    ctx.fillRect((G.world.garage.x + G.world.garage.w / 2) * s - 4, (G.world.garage.y + G.world.garage.h / 2) * s - 4, 8, 8);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 8px sans-serif';
+    ctx.fillText('$', (G.world.garage.x + G.world.garage.w / 2) * s - 2.5, (G.world.garage.y + G.world.garage.h / 2) * s + 3);
+  }
+  if (G.mission.targetCar && G.mission.index === 9) {
+    ctx.fillStyle = '#ff2222';
+    ctx.beginPath();
+    ctx.arc(G.mission.targetCar.x * s, G.mission.targetCar.y * s, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Race checkpoints (orange) and the taxi fare (cyan).
+  if (G.mission.checkpoints) {
+    ctx.fillStyle = '#ff8c00';
+    for (let i = G.mission.checkpointIndex; i < G.mission.checkpoints.length; i++) {
+      ctx.beginPath();
+      ctx.arc(G.mission.checkpoints[i].x * s, G.mission.checkpoints[i].y * s, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  if (G.mission.farePed) {
+    ctx.fillStyle = '#1abc9c';
+    ctx.beginPath();
+    ctx.arc(G.mission.farePed.x * s, G.mission.farePed.y * s, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
   const p = G.player;
   const px = p.car ? p.car.x : p.x, py = p.car ? p.car.y : p.y;
   ctx.fillStyle = '#ffffff';
@@ -106,8 +137,17 @@ export function drawHud(ctx, G, W, H) {
   ctx.fillStyle = '#7ee787';
   ctx.font = 'bold 15px sans-serif';
   ctx.fillText('$' + G.money.toLocaleString('en-US'), 24, 64);
-  // Top-right: wanted stars.
+  // Top-right: wanted stars + in-game clock (sun by day, moon by night).
   drawStars(ctx, W - 178, 40, G.wanted);
+  const hh = Math.floor(G.clockMinutes / 60);
+  const mm = Math.floor(G.clockMinutes % 60);
+  const clockText = (isNight(G) ? '☾ ' : '☀ ') + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+  ctx.font = 'bold 15px sans-serif';
+  const cw = ctx.measureText(clockText).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  roundRect(ctx, W - cw - 30, 48, cw + 16, 24, 7); ctx.fill();
+  ctx.fillStyle = isNight(G) ? '#9db8ff' : '#ffd76e';
+  ctx.fillText(clockText, W - cw - 22, 65);
   // Top-centre: objective.
   const obj = missionObjectiveText(G);
   ctx.font = 'bold 15px sans-serif';
@@ -126,6 +166,15 @@ export function drawHud(ctx, G, W, H) {
   roundRect(ctx, W / 2 - dw / 2 - 10, 46, dw + 20, 20, 7); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.fillText(debtText, W / 2 - dw / 2, 60);
+  // Jobs progress: 6 story jobs, then 4 side jobs.
+  const jobsDone = Math.min(G.mission.index, MISSION_DEFS.length);
+  const jobsText = 'Jobs: ' + jobsDone + ' / ' + MISSION_DEFS.length + (G.mission.debtPaid ? ' · debt paid — side jobs pay cash' : '');
+  ctx.font = '12px sans-serif';
+  const jw = ctx.measureText(jobsText).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  roundRect(ctx, W / 2 - jw / 2 - 10, 70, jw + 20, 20, 7); ctx.fill();
+  ctx.fillStyle = G.mission.debtPaid ? '#7ee787' : 'rgba(255,255,255,0.9)';
+  ctx.fillText(jobsText, W / 2 - jw / 2, 84);
   // Bottom-left: minimap.
   drawMinimap(ctx, G, 18, H - 178, 160);
   // Bottom-right: speed while driving, car health if in a car.
@@ -141,8 +190,11 @@ export function drawHud(ctx, G, W, H) {
     ctx.fillStyle = '#bbbbbb';
     ctx.fillText('km/h', W - 26, H - 24);
     ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(vehicleName(p.car), W - 138, H - 64);
     ctx.fillStyle = p.car.health > 30 ? '#4ade80' : '#ef4444';
-    roundRect(ctx, W - 138, H - 66, 112 * Math.max(0, p.car.health / 100), 6, 3); ctx.fill();
+    roundRect(ctx, W - 138, H - 56, 112 * Math.max(0, p.car.health / 100), 6, 3); ctx.fill();
   } else {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     roundRect(ctx, W - 218, H - 44, 204, 30, 8); ctx.fill();
@@ -150,12 +202,12 @@ export function drawHud(ctx, G, W, H) {
     ctx.font = '13px sans-serif';
     ctx.fillText('E — enter car   ·   F — punch', W - 206, H - 24);
   }
-  // Flash message under the objective.
+  // Flash message under the objective pills.
   if (G.flash && G.time < G.flash.until) {
     ctx.font = 'bold 16px sans-serif';
     const fw = ctx.measureText(G.flash.text).width;
     ctx.fillStyle = G.flash.color;
-    ctx.fillText(G.flash.text, W / 2 - fw / 2, 84);
+    ctx.fillText(G.flash.text, W / 2 - fw / 2, 112);
   }
   // Mission banner (centre).
   const b = G.mission.banner;
@@ -221,11 +273,11 @@ export function drawTitle(ctx, G, W, H) {
   ctx.fillText('An open-world crime story', W / 2, H * 0.32);
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#e8e8e8';
-  const story = 'Danny Cole, getaway driver, owes fixer Ms. Voss $50,000. Six jobs. One city. No way out but through.';
+  const story = 'Danny Cole, getaway driver, owes fixer Ms. Voss $50,000. Six story jobs, four side jobs, and a city that never sleeps — day turns to neon night.';
   wrapText(ctx, story, W / 2, H * 0.40, 560, 20);
   ctx.font = '14px sans-serif';
   ctx.fillStyle = '#cfe8ff';
-  const controls = 'WASD / Arrows — walk & drive · SHIFT — run · E — enter / exit car · SPACE — handbrake · Mouse — aim · Click — shoot · F — punch · P — pause · M — music';
+  const controls = 'WASD / Arrows — walk & drive · SHIFT — run · E — enter / exit car · SPACE — handbrake · Mouse — aim · Click — shoot · F — punch · P — pause · M — music · Pay \'n Spray ($200) clears your wanted level';
   wrapText(ctx, controls, W / 2, H * 0.52, 640, 20);
   ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = G.time % 1 < 0.6 ? '#ffd700' : '#ffffff';

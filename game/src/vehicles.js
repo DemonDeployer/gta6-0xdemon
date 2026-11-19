@@ -2,22 +2,30 @@
 // Cars are simple arcade bodies: position, heading, speed, health. Traffic
 // follows the road grid in lanes, stops for the car ahead, and turns at
 // intersections. The player's car accelerates, brakes, steers and drifts.
-import { CFG, PALETTE } from './config.js';
+import { CFG, PALETTE, VEHICLE_STATS } from './config.js';
 import { isDown } from './input.js';
 import { damagePlayer } from './player.js';
 import { isRoad, laneOffset, randomRoadPoint, roadCenter, worldWidth, worldHeight } from './world.js';
 
 let carId = 1;
 
+export function vehicleName(car) {
+  return (VEHICLE_STATS[car.type] || VEHICLE_STATS.sedan).name;
+}
+
 export function makeCar(x, y, angle, opts = {}) {
+  const stats = VEHICLE_STATS[opts.type || 'sedan'] || VEHICLE_STATS.sedan;
   return {
     id: carId++,
     x, y, angle,
     speed: opts.speed || 0,
     color: opts.color || PALETTE.carColors[Math.floor(Math.random() * PALETTE.carColors.length)],
-    type: opts.type || 'sedan',       // sedan | sport | taxi | police | truck
+    type: opts.type || 'sedan',       // sedan | sport | taxi | police | truck | van | bike
+    maxSpeed: stats.maxSpeed,
+    accel: stats.accel,
+    turn: stats.turn,
     ai: !!opts.ai,
-    driver: opts.driver || null,      // 'player' | 'traffic' | 'cop' | null (parked)
+    driver: opts.driver || null,      // 'player' | 'traffic' | 'cop' | 'rival' | 'getaway' | null (parked)
     parked: !!opts.parked,
     wasStolen: false,
     health: CFG.CAR_MAX_HEALTH,
@@ -36,7 +44,8 @@ export function spawnTrafficCar(G, nearX, nearY) {
     ? (Math.random() < 0.5 ? 0 : Math.PI)
     : (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
   const off = laneOffset(angle);
-  const type = Math.random() < 0.08 ? 'taxi' : (Math.random() < 0.08 ? 'truck' : 'sedan');
+  const roll = Math.random();
+  const type = roll < 0.08 ? 'taxi' : roll < 0.16 ? 'truck' : roll < 0.23 ? 'van' : roll < 0.30 ? 'bike' : 'sedan';
   const car = makeCar(p.x + off.x, p.y + off.y, angle, {
     ai: true, driver: 'traffic', speed: CFG.TRAFFIC_SPEED * (0.8 + Math.random() * 0.4), type,
     color: type === 'taxi' ? '#f2c14e' : undefined,
@@ -45,8 +54,8 @@ export function spawnTrafficCar(G, nearX, nearY) {
   return car;
 }
 
-export function spawnParkedCar(G, x, y, angle, color) {
-  const car = makeCar(x, y, angle, { parked: true, color });
+export function spawnParkedCar(G, x, y, angle, color, opts = {}) {
+  const car = makeCar(x, y, angle, { parked: true, color, type: opts.type });
   G.cars.push(car);
   return car;
 }
@@ -70,6 +79,9 @@ export function seedParkedCars(G) {
     if (isRoad(px, py)) continue;
     spawnParkedCar(G, px, py, angle);
   }
+  // A bike and a van parked by the marina, ready to steal.
+  spawnParkedCar(G, G.world.marina.x + 30, G.world.marina.y + 60, 0, '#ff5e78', { type: 'bike' });
+  spawnParkedCar(G, G.world.marina.x + 90, G.world.marina.y + 60, 0, '#e8e8e8', { type: 'van' });
 }
 
 // --- traffic AI ------------------------------------------------------------
@@ -142,15 +154,15 @@ export function updatePlayerCar(G, dt) {
   const left = isDown(input, 'a', 'arrowleft');
   const right = isDown(input, 'd', 'arrowright');
 
-  if (forward) car.speed += CFG.CAR_ACCEL * dt;
+  if (forward) car.speed += car.accel * dt;
   else if (back) {
     if (car.speed > 8) car.speed -= CFG.CAR_BRAKE * dt; // brake
-    else car.speed -= CFG.CAR_ACCEL * 0.55 * dt;        // reverse
+    else car.speed -= car.accel * 0.55 * dt;        // reverse
   } else {
     car.speed -= Math.sign(car.speed) * 90 * dt;        // drag
     if (Math.abs(car.speed) < 6) car.speed = 0;
   }
-  car.speed = Math.max(-CFG.CAR_MAX_REVERSE, Math.min(CFG.CAR_MAX_SPEED, car.speed));
+  car.speed = Math.max(-CFG.CAR_MAX_REVERSE, Math.min(car.maxSpeed, car.speed));
   car.brakeLight = back && car.speed > 8;
 
   // Steering scales with speed; reversing flips it. Handbrake (space) drifts.
@@ -158,7 +170,7 @@ export function updatePlayerCar(G, dt) {
   const spd = Math.abs(car.speed);
   const grip = isDown(input, ' ') ? 0.45 : 1;
   if (steerInput !== 0 && spd > 4) {
-    car.angle += steerInput * CFG.CAR_TURN * (spd / CFG.CAR_MAX_SPEED) * 1.6 * Math.sign(car.speed) * dt * grip * 2.2;
+    car.angle += steerInput * car.turn * (spd / car.maxSpeed) * 1.6 * Math.sign(car.speed) * dt * grip * 2.2;
     if (spd > 180 && Math.random() < dt * 14) {
       // Skid marks + tyre smoke while cornering hard.
       const bx = car.x - Math.cos(car.angle) * 18, by = car.y - Math.sin(car.angle) * 18;
@@ -206,7 +218,7 @@ export function updatePlayerCar(G, dt) {
     car.speed = 0;
     damagePlayer(G, 15, 'Your car blew up');
   }
-  G.audio.setEngine(Math.abs(car.speed) / CFG.CAR_MAX_SPEED, true);
+  G.audio.setEngine(Math.abs(car.speed) / car.maxSpeed, true);
 }
 
 // --- car-vs-car --------------------------------------------------------------

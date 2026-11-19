@@ -34,6 +34,8 @@ export function buildWorld() {
     water: null,     // {x, y, w, h}
     hospital: null,  // respawn point {x, y}
     marina: null,    // east-coast landmark {x, y}
+    garage: null,    // Pay 'n Spray: drive in, pay, lose the heat {x, y, w, h}
+    districts: [],   // named neighbourhoods, drawn on the ground {x, y, name}
   };
 
   const P = pitch();
@@ -80,6 +82,22 @@ export function buildWorld() {
 
   // Hospital (respawn point) sits on the west edge, block (0, 0) corner.
   world.hospital = { x: roadCenter(0), y: roadCenter(0) };
+  // Pay 'n Spray occupies the parking-lot block: drive onto the lot and the
+  // shop clears your wanted level and repairs the car for a flat fee.
+  const lotBx = CFG.LOT_BX, lotBy = CFG.LOT_BY;
+  world.garage = {
+    x: lotBx * P + CFG.ROAD, y: lotBy * P + CFG.ROAD,
+    w: CFG.BLOCK, h: CFG.BLOCK,
+  };
+  // Named districts, so the city reads as a place with neighbourhoods.
+  world.districts = [
+    { x: roadCenter(2), y: roadCenter(2), name: 'DOWNTOWN' },
+    { x: roadCenter(8), y: roadCenter(2), name: 'DOCKS' },
+    { x: roadCenter(5), y: roadCenter(5), name: 'BAY PARK' },
+    { x: roadCenter(2), y: roadCenter(8), name: 'PAY \'N SPRAY' },
+    { x: roadCenter(8), y: roadCenter(8), name: 'MARINA' },
+    { x: beachX + CFG.BEACH_W / 2, y: roadCenter(5), name: 'NEON BEACH' },
+  ];
   return world;
 }
 

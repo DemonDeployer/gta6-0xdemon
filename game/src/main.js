@@ -1,6 +1,7 @@
 // Neon Bay — main: game state, the loop, wiring, save/load, camera,
-// particles, busted/wasted, and the ?scene= hooks used for screenshots and
-// play-testing (title / street / chase / mission).
+// particles, busted/wasted, day/night clock, Pay 'n Spray, and the ?scene=
+// hooks used for screenshots and play-testing (title / street / chase /
+// mission / night / race).
 import { CFG, MISSION_DEFS } from './config.js';
 import { buildWorld, hitBuilding, roadCenter } from './world.js';
 import { createInput, isDown, wasPressed, endFrame } from './input.js';
@@ -27,6 +28,8 @@ resize();
 const G = {
   state: 'title',          // title | playing | paused | busted | wasted
   time: 0,
+  clockMinutes: CFG.DAY_START_MINUTES, // in-game clock: 10:00 at story start
+  sprayCooldown: 0,
   money: 0,
   health: 100,
   wanted: 0,
@@ -75,6 +78,7 @@ G.saveGame = () => {
     localStorage.setItem(CFG.SAVE_KEY, JSON.stringify({
       money: G.money,
       missionIndex: G.mission.index,
+      clockMinutes: G.clockMinutes,
       x: p.car ? p.car.x : p.x,
       y: p.car ? p.car.y : p.y,
       health: p.health,
@@ -146,6 +150,7 @@ function respawn() {
 function newGame() {
   G.money = 0;
   G.wanted = 0;
+  G.clockMinutes = CFG.DAY_START_MINUTES;
   G.cars = []; G.peds = []; G.cops = []; G.bullets = []; G.particles = []; G.skidmarks = [];
   G.player = createPlayer(roadCenter(1), roadCenter(1));
   G.mission = createMissionState();
@@ -162,6 +167,7 @@ function continueGame() {
   if (!s) { newGame(); return; }
   G.money = s.money || 0;
   G.wanted = 0;
+  G.clockMinutes = typeof s.clockMinutes === 'number' ? s.clockMinutes : CFG.DAY_START_MINUTES;
   G.cars = []; G.peds = []; G.cops = []; G.bullets = []; G.particles = []; G.skidmarks = [];
   G.player = createPlayer(s.x || roadCenter(1), s.y || roadCenter(1));
   G.player.health = s.health || CFG.PLAYER_MAX_HEALTH;
@@ -184,6 +190,8 @@ function applyScene(name) {
     p.x = roadCenter(5); p.y = roadCenter(5);
     for (let i = 0; i < 6; i++) spawnTrafficCar(G, p.x, p.y);
     G.camera.x = p.x; G.camera.y = p.y;
+    G.mission.stage = 'active';
+    G.mission.banner = null; // skip the intro card in this staged shot
     return;
   }
   if (name === 'chase') {
@@ -223,6 +231,39 @@ function applyScene(name) {
     G.cars.push(car);
     enterCar(G, car);
     G.mission.stage = 'active';
+    G.camera.x = car.x; G.camera.y = car.y;
+    return;
+  }
+  if (name === 'night') {
+    // Night chase: neon signs, headlights, 3-star heat at 22:15.
+    G.clockMinutes = 22 * 60 + 15;
+    const car = makeCar(roadCenter(4), roadCenter(5), 0, { type: 'sport', color: '#e74c3c' });
+    G.cars.push(car);
+    enterCar(G, car);
+    car.speed = 300;
+    G.wanted = 3;
+    for (let i = 0; i < 3; i++) {
+      const cop = makeCar(roadCenter(4) - 70 - i * 55, roadCenter(5) + (i % 2 ? 26 : -26), 0,
+        { ai: true, driver: 'cop', type: 'police', color: '#1c2733', speed: 320 });
+      G.cars.push(cop);
+      G.cops.push({ kind: 'car', car: cop, shootTimer: 1 });
+    }
+    G.camera.x = car.x; G.camera.y = car.y;
+    G.mission.stage = 'active';
+    G.mission.banner = null; // skip the intro card in this staged shot
+    return;
+  }
+  if (name === 'race') {
+    // Side Job 8, Neon Street Race: first checkpoint ahead, rival beside you.
+    G.clockMinutes = 21 * 60;
+    G.mission.index = 7;
+    startMission(G, 7);
+    G.mission.stage = 'active';
+    G.mission.banner = null; // skip the intro card in this staged shot
+    const car = makeCar(roadCenter(2) - 120, roadCenter(8), 0, { type: 'sport', color: '#ff2d95' });
+    G.cars.push(car);
+    enterCar(G, car);
+    car.speed = 200;
     G.camera.x = car.x; G.camera.y = car.y;
     return;
   }
@@ -275,6 +316,24 @@ function frame(now) {
     updatePolice(G, dt);
     updateBullets(G, dt);
     updateMissions(G, dt);
+    // The in-game clock runs: a full day every DAY_LENGTH_SECONDS.
+    G.clockMinutes = (G.clockMinutes + dt * (24 * 60 / CFG.DAY_LENGTH_SECONDS)) % (24 * 60);
+    // Pay 'n Spray: drive onto the lot, pay $200, lose the heat + repair.
+    if (G.player.car && G.world.garage) {
+      const g = G.world.garage;
+      const c = G.player.car;
+      const inside = c.x > g.x && c.x < g.x + g.w && c.y > g.y && c.y < g.y + g.h;
+      G.sprayCooldown = Math.max(0, G.sprayCooldown - dt);
+      if (inside && G.sprayCooldown <= 0 && G.money >= CFG.SPRAY_COST && (G.wanted > 0 || c.health < 100)) {
+        G.money -= CFG.SPRAY_COST;
+        G.wanted = 0; G.wantedTimer = 0; G.cops = [];
+        c.health = CFG.CAR_MAX_HEALTH;
+        G.sprayCooldown = CFG.SPRAY_COOLDOWN_SECONDS;
+        G.flashMessage("Pay 'n Spray: clean plates, fresh paint — $200", '#7fd94f');
+        G.audio.spray();
+        G.addParticle(c.x, c.y, 'sparks', 10);
+      }
+    }
     G.audio.siren(dt, G.wanted);
     G.audio.music(dt);
     // Camera follows the player (or their car), smoothly.
