@@ -1,268 +1,114 @@
-// Neon Bay — missions: Danny Cole's six-job chain against a $50,000 debt to
-// fixer Ms. Voss. Each mission is a small state machine: a marker on the map,
-// an objective line, a timer where the job has one, and a pass/fail outcome
-// that pays cash and unlocks the next job. Failing lets you retry.
-import { CFG, MISSION_DEFS, DEBT_TOTAL } from './config.js';
-import { roadCenter } from './world.js';
-import { makeCar } from './vehicles.js';
-import { makePed } from './pedestrians.js';
+// Neon Bay — mission logic. Pure functions, no DOM, no imports:
+// the same file runs in the browser and in the node unit tests.
+export const MISSION_PAY = { 1: 400, 2: 600, 3: 800, 4: 1000, 5: 1200, 6: 1500, 7: 900, 8: 3000, 9: 1800, 10: 2500 };
+export const TAXI_PAY = 900, RACE_PAY = 3000, DELIVERY_PAY = 1800, VIGILANTE_PAY = 2500;
 
-// Fixed road-junction points, spread across the city, used as markers.
-function junction(gx, gy) { return { x: roadCenter(gx), y: roadCenter(gy) }; }
-
-const MARKERS = {
-  firstGear: () => junction(7, 6),
-  packagePickup: () => junction(9, 2),
-  packageDeliver: () => junction(1, 8),
-  vipPickup: () => junction(3, 7),
-  vipDeliver: () => junction(8, 1),
-  survive: () => junction(5, 5),
-  stealCar: () => junction(9, 2),
-  garage: () => junction(2, 2),
-  finalPickup: () => junction(8, 8),
-  finalDeliver: () => junction(1, 1),
-};
-
-export function createMissionState() {
+export function newMissionState() {
   return {
-    index: 0,            // which mission of MISSION_DEFS is active (6 = all done)
-    stage: 'idle',       // idle | brief | active | done | failed | complete
-    timer: 0,            // countdown for timed jobs
-    target: null,        // {x, y} current marker
-    targetCar: null,     // mission 5's gold car
-    vipPed: null,        // mission 3's VIP pedestrian
-    vipAboard: false,
-    banner: null,        // {title, sub, until} big centre banner
-    briefTimer: 0,       // seconds left on the intro card
-    debtPaid: false,
+    cash: 500, jobsDone: 0, debt: 5000, debtPaid: false,
+    active: null, // { id, name, stage, ... } or null
+    completed: [], failed: [],
   };
 }
-
-export function currentDef(G) {
-  return MISSION_DEFS[G.mission.index] || null;
+// Finish a story job (1–6). At job 6 the debt is paid off.
+export function completeStoryJob(state, id) {
+  if (state.active && state.active.id !== id) return { ok: false, reason: 'another job active' };
+  if (state.completed.includes(id)) return { ok: false, reason: 'already done' };
+  const pay = MISSION_PAY[id] || 0;
+  state.cash += pay;
+  state.debt = Math.max(0, state.debt - pay);
+  state.jobsDone += 1;
+  state.completed.push(id);
+  state.active = null;
+  if (id === 6) { state.debt = 0; state.debtPaid = true; }
+  return { ok: true, pay, debt: state.debt, debtPaid: state.debtPaid };
 }
 
-export function missionTarget(G) {
-  return G.mission.target;
+// --- 7. Taxi Fare -----------------------------------------------------------
+export function startTaxi(state) {
+  state.active = { id: 7, name: 'Taxi Fare', stage: 'pickup', passenger: false };
+  return state.active;
+}
+export function taxiPickup(state) {
+  const m = state.active;
+  if (!m || m.id !== 7 || m.stage !== 'pickup') return { ok: false, reason: 'no pickup waiting' };
+  m.stage = 'deliver'; m.passenger = true;
+  return { ok: true, stage: 'deliver' };
+}
+export function taxiDeliver(state) {
+  const m = state.active;
+  if (!m || m.id !== 7 || m.stage !== 'deliver' || !m.passenger) return { ok: false, reason: 'no passenger aboard' };
+  state.cash += TAXI_PAY; state.jobsDone += 1; state.completed.push(7); state.active = null;
+  return { ok: true, pay: TAXI_PAY, cash: state.cash };
 }
 
-export function missionObjectiveText(G) {
-  const m = G.mission;
-  const def = currentDef(G);
-  if (!def) return 'Debt paid — Neon Bay is yours. Free roam.';
-  if (m.stage === 'brief') return def.title + ' — press ENTER to start';
-  if (m.stage === 'failed') return 'Mission failed — press ENTER to retry';
-  if (m.stage === 'done') return 'Mission complete!';
-  switch (def.kind) {
-    case 'goto': return 'Reach the yellow marker';
-    case 'pickup-deliver':
-      return m.stage === 'pickup' ? 'Pick up the package' : 'Deliver the package — ' + Math.ceil(m.timer) + 's left';
-    case 'vip':
-      if (m.stage === 'pickup') return 'Pick up the VIP (drive to him)';
-      return 'Drive the VIP to the drop-off — keep the car above 40%';
-    case 'survive': return 'Survive the chase — ' + Math.ceil(m.timer) + 's left';
-    case 'steal-car':
-      return m.targetCar && G.player.car === m.targetCar
-        ? 'Deliver the gold car to the garage'
-        : 'Steal the gold sports car at the marina';
-    case 'final':
-      return m.stage === 'pickup' ? 'Pick up the cash' : 'Deliver the cash — the whole city is hunting you';
-    default: return def.title;
+// --- 8. Neon Street Race ----------------------------------------------------
+export function startRace(state) {
+  state.active = { id: 8, name: 'Neon Street Race', stage: 'racing', checkpoints: 0, rival: 0, total: 4 };
+  return state.active;
+}
+export function raceCheckpoint(state, who) {
+  const m = state.active;
+  if (!m || m.id !== 8 || m.stage !== 'racing') return { ok: false, reason: 'no race running' };
+  if (who === 'player') m.checkpoints += 1; else m.rival += 1;
+  return { ok: true, player: m.checkpoints, rival: m.rival };
+}
+export function raceFinish(state, winner) {
+  const m = state.active;
+  if (!m || m.id !== 8 || m.stage !== 'racing') return { ok: false, reason: 'no race running' };
+  if (winner === 'player') {
+    state.cash += RACE_PAY; state.jobsDone += 1; state.completed.push(8); state.active = null;
+    return { ok: true, win: true, pay: RACE_PAY, cash: state.cash };
   }
+  state.failed.push(8); state.active = null;
+  return { ok: true, win: false, pay: 0, failed: true };
 }
 
-function setMarker(G, point) {
-  G.mission.target = point;
+// --- 9. Delivery Run --------------------------------------------------------
+export function startDelivery(state) {
+  state.active = { id: 9, name: 'Delivery Run', stage: 'delivering', drops: 0, total: 3 };
+  return state.active;
 }
-
-function showBanner(G, title, sub, seconds = 4) {
-  G.mission.banner = { title, sub, until: G.time + seconds };
-}
-
-export function startMission(G, index) {
-  const m = G.mission;
-  const def = MISSION_DEFS[index];
-  if (!def) { m.stage = 'complete'; m.target = null; return; }
-  m.index = index;
-  m.stage = 'brief';
-  m.briefTimer = 5;
-  m.timer = def.timeLimit || 0;
-  m.vipAboard = false;
-  m.targetCar = null;
-  m.vipPed = null;
-  m.garageSet = false;
-  showBanner(G, def.title, def.intro, 5);
-  switch (def.kind) {
-    case 'goto': setMarker(G, MARKERS.firstGear()); break;
-    case 'pickup-deliver': setMarker(G, MARKERS.packagePickup()); break;
-    case 'vip': {
-      setMarker(G, MARKERS.vipPickup());
-      const at = MARKERS.vipPickup();
-      const vip = makePed(at.x + 30, at.y + 30);
-      vip.vip = true; vip.shirt = '#ffd700'; vip.speed = 0;
-      G.peds.push(vip);
-      m.vipPed = vip;
-      break;
-    }
-    case 'survive':
-      setMarker(G, MARKERS.survive());
-      G.wanted = 3;
-      G.wantedTimer = 0;
-      break;
-    case 'steal-car': {
-      setMarker(G, MARKERS.stealCar());
-      const at = MARKERS.stealCar();
-      const car = makeCar(at.x + 60, at.y, 0, { parked: true, type: 'sport', color: '#ffd700' });
-      G.cars.push(car);
-      m.targetCar = car;
-      break;
-    }
-    case 'final': setMarker(G, MARKERS.finalPickup()); break;
-    default: break;
+export function deliveryDrop(state) {
+  const m = state.active;
+  if (!m || m.id !== 9 || m.stage !== 'delivering') return { ok: false, reason: 'no delivery running' };
+  m.drops += 1;
+  if (m.drops >= m.total) {
+    state.cash += DELIVERY_PAY; state.jobsDone += 1; state.completed.push(9); state.active = null;
+    return { ok: true, done: true, pay: DELIVERY_PAY, cash: state.cash };
   }
+  return { ok: true, done: false, drops: m.drops };
 }
 
-function completeMission(G) {
-  const m = G.mission;
-  const def = currentDef(G);
-  G.money += def.reward;
-  G.audio.missionDone();
-  G.audio.pickup();
-  const last = m.index >= MISSION_DEFS.length - 1;
-  showBanner(G, 'MISSION COMPLETE', '+' + def.reward.toLocaleString('en-US') + ' — ' + def.title, 4);
-  m.stage = 'done';
-  m.target = null;
-  m.debtPaid = last;
-  G.saveGame();
-  if (last) {
-    showBanner(G, 'DEBT PAID!', 'Danny Cole is free of Ms. Voss. Neon Bay is yours now.', 6);
-    G.flashMessage('Debt paid: $50,000 / $50,000', '#ffd700');
+// --- 10. Vigilante ----------------------------------------------------------
+export function startVigilante(state) {
+  state.active = { id: 10, name: 'Vigilante', stage: 'chase', getawayHp: 100, fled: false };
+  return state.active;
+}
+// The getaway car flees: each tick it gains distance unless the player is close.
+export function getawayFlee(state, playerClose, dt) {
+  const m = state.active;
+  if (!m || m.id !== 10 || m.stage !== 'chase') return { ok: false, reason: 'no chase running' };
+  m.distance = (m.distance || 0) + (playerClose ? -20 * dt : 45 * dt);
+  if (m.distance > 900) { m.fled = true; m.stage = 'escaped'; state.failed.push(10); state.active = null; return { ok: true, fled: true }; }
+  return { ok: true, fled: false, distance: m.distance };
+}
+export function vigilanteHit(state, dmg) {
+  const m = state.active;
+  if (!m || m.id !== 10 || m.stage !== 'chase') return { ok: false, reason: 'no chase running' };
+  m.getawayHp = Math.max(0, m.getawayHp - dmg);
+  if (m.getawayHp <= 0) {
+    state.cash += VIGILANTE_PAY; state.jobsDone += 1; state.completed.push(10); state.active = null;
+    return { ok: true, wrecked: true, pay: VIGILANTE_PAY, cash: state.cash };
   }
-  // The next job unlocks after the banner; main.js advances on a timer.
-  m.doneTimer = 3;
+  return { ok: true, wrecked: false, hp: m.getawayHp };
 }
 
-function failMission(G, reason) {
-  const m = G.mission;
-  G.audio.missionFail();
-  showBanner(G, 'MISSION FAILED', reason, 4);
-  m.stage = 'failed';
-  m.target = null;
-  if (m.vipPed) { G.peds = G.peds.filter((p) => p !== m.vipPed); m.vipPed = null; }
-  m.vipAboard = false;
-}
-
-function reached(G, point) {
-  const p = G.player;
-  const x = p.car ? p.car.x : p.x;
-  const y = p.car ? p.car.y : p.y;
-  return Math.hypot(x - point.x, y - point.y) < CFG.MISSION_MARKER_RADIUS;
-}
-
-export function updateMissions(G, dt) {
-  const m = G.mission;
-  const def = currentDef(G);
-  if (!def) return;
-
-  if (m.stage === 'brief') {
-    m.briefTimer -= dt;
-    if (m.briefTimer <= 0) m.stage = 'active';
-    return;
-  }
-  if (m.stage === 'done') {
-    m.doneTimer -= dt;
-    if (m.doneTimer <= 0) startMission(G, m.index + 1);
-    return;
-  }
-  if (m.stage === 'failed') return; // main.js retries on Enter
-  // 'active' is the first leg; 'deliver' is the second leg of multi-leg jobs.
-  if (m.stage !== 'active' && m.stage !== 'deliver') return;
-
-  // Timed jobs.
-  if (def.timeLimit && (def.kind === 'pickup-deliver' || def.kind === 'survive')) {
-    if (def.kind === 'survive' || m.stage === 'deliver') {
-      m.timer -= dt;
-      if (m.timer <= 0) {
-        if (def.kind === 'survive') completeMission(G);
-        else failMission(G, 'Too slow — the client walked away.');
-        return;
-      }
-    }
-  }
-
-  switch (def.kind) {
-    case 'goto':
-      if (reached(G, m.target)) completeMission(G);
-      break;
-    case 'pickup-deliver':
-      if (m.stage === 'pickup' || m.stage === 'active') {
-        // 'active' doubles as the pickup leg for this kind.
-        if (reached(G, m.target)) {
-          G.audio.pickup();
-          G.flashMessage('Package collected — deliver it fast!', '#ffd700');
-          m.stage = 'deliver';
-          m.timer = def.timeLimit;
-          setMarker(G, MARKERS.packageDeliver());
-        }
-      } else if (m.stage === 'deliver') {
-        if (reached(G, m.target)) completeMission(G);
-      }
-      break;
-    case 'vip':
-      if (m.stage === 'pickup' || m.stage === 'active') {
-        if (G.player.car && reached(G, m.target)) {
-          G.audio.pickup();
-          G.flashMessage('VIP aboard — drive smooth!', '#ffd700');
-          if (m.vipPed) { G.peds = G.peds.filter((p) => p !== m.vipPed); m.vipPed = null; }
-          m.vipAboard = true;
-          m.stage = 'deliver';
-          setMarker(G, MARKERS.vipDeliver());
-        }
-      } else if (m.stage === 'deliver') {
-        if (G.player.car && G.player.car.health < 40) {
-          failMission(G, 'The car is wrecked — the VIP walked away.');
-        } else if (reached(G, m.target)) {
-          completeMission(G);
-        }
-      }
-      break;
-    case 'survive':
-      // Timer handled above; just survive.
-      break;
-    case 'steal-car': {
-      const drivingTarget = G.player.car === m.targetCar;
-      if (drivingTarget && !m.garageSet) {
-        m.garageSet = true;
-        setMarker(G, MARKERS.garage());
-        G.flashMessage('Got it — now lose the heat and reach the garage', '#ffd700');
-      }
-      if (drivingTarget && m.garageSet && reached(G, m.target)) completeMission(G);
-      break;
-    }
-    case 'final':
-      if (m.stage === 'pickup' || m.stage === 'active') {
-        if (reached(G, m.target)) {
-          G.audio.pickup();
-          G.flashMessage('Cash grabbed — 4 stars! Run!', '#ff5e5e');
-          m.stage = 'deliver';
-          G.wanted = 4;
-          setMarker(G, MARKERS.finalDeliver());
-        }
-      } else if (m.stage === 'deliver') {
-        if (reached(G, m.target)) completeMission(G);
-      }
-      break;
-    default:
-      break;
-  }
-}
-
-export function retryMission(G) {
-  startMission(G, G.mission.index);
-}
-
-export function debtProgress(G) {
-  let earned = 0;
-  for (let i = 0; i < Math.min(G.mission.index, MISSION_DEFS.length); i++) earned += MISSION_DEFS[i].reward;
-  return { earned, total: DEBT_TOTAL };
+// --- Pay 'n Spray ----------------------------------------------------------
+export function payNSpray(state, car) {
+  if (state.cash < 200) return { ok: false, reason: 'not enough cash' };
+  state.cash -= 200;
+  if (car) car.hp = car.maxHp;
+  state.wanted = 0;
+  return { ok: true, cost: 200, cash: state.cash, hp: car ? car.hp : null };
 }
